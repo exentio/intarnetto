@@ -1,0 +1,111 @@
+/* https://github.com/dkeg/crayolo/blob/master/colors/paints (5725 bg) */
+:root {
+	--bg: #353234;
+	--fg: #c9c8c8;
+	--blk: #332e2e;
+	--bblk: #433f3f;
+	--red: #854340;
+	--grn: #668c71;
+	--ylw: #b2885d;
+	--blu: #41647b;
+	--mag: #915556;
+	--cyn: #477578;
+	--wht: #c9c8c8;
+}
+
+body {
+	color: var(--fg);
+	background-color: var(--bg);
+	font-size: 16pt;
+	font-family: sans-serif;
+}
+
+.room {
+	background-color: var(--blk);
+	height: 100%;
+	margin: 8px;
+}
+
+.roomname {
+	background-color: var(--bblk);
+	border-left: 6px solid var(--wht);
+	padding: 12px;
+	text-transform: capitalize;
+}
+
+.roomcontainer {
+	padding: 12px;
+	text-align: center;
+}
+
+.module {
+	height: 100%;
+	text-align: center;
+}
+
+.module > * {
+	white-space: pre;
+}
+
+.module #temp::before {
+	content: "Temperature\A";
+	font-size: 16pt;
+	line-height: 16pt;
+}
+
+.module #temp {
+	line-height: 32pt;
+	font-size: 32pt;
+}
+
+.module #hum {
+	font-size: 12pt;
+	padding-top: 4pt;
+}
+
+.module #hum::before {
+	content: "Humidity ";
+}
+
+.module #hum::after {
+	content: "%";
+}
+
+.roomname.red {
+	border-left-color: var(--red) !important;
+}
+
+.roomname.green {
+	border-left-color: var(--grn) !important;
+}
+
+.roomname.yellow {
+	border-left-color: var(--ylw) !important;
+}
+
+.roomname.blue {
+	border-left-color: var(--blu) !important;
+}
+
+.roomname.magenta {
+	border-left-color: var(--mag) !important;
+}
+
+.roomname.cyan {
+	border-left-color: var(--cyn) !important;
+}
+
+.pure-g > div {
+	-webkit-box-sizing: border-box;
+	-moz-box-sizing: border-box;
+	box-sizing: border-box;
+}
+
+.module #islit, .module #isclosed {
+	max-height: 128px;
+}
+
+.module #play, .module #prev, .module #next {
+	max-height: 24px;
+	margin: 0 12px;
+}
