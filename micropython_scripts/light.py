@@ -1,36 +1,43 @@
-import socket, machine, time, urequests
+from umqtt import MQTTClient
+from machine import Pin
+import machine
 
-led = machine.Pin(3, machine.Pin.OUT)
+led = Pin(2, Pin.OUT, value=1)
 
-def send_status():
-    try:
-        response = urequests.get(req % led.value())
-        response.close()
-    except Exception as e:
-        print(str(e))
-        pass
+# Default MQTT server to connect to
+SERVER = "192.168.12.1"
+CLIENT_ID = "104"
+TOPIC = b"intarnetto/module_" + CLIENT_ID
 
-req = "http://192.168.12.1:8080/status_light?lit=%d"
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind(('', 80))
-s.listen(5)
-while True:
-    HEAD = b"""\
-HTTP/1.0 200 OK
+state = True
 
-%d
-"""
-    conn, addr = s.accept()
-    request = conn.recv(1024)
-    request = str(request)
-    LEDON = request.find('/light?lit=1')
-    LEDOFF = request.find('/light?lit=0')
-    STATUS = request.find('/status')
-    if LEDON == 6:
-        led.on()
-    if LEDOFF == 6:
-        led.off()
-    conn.write(HEAD % led.value())
-    conn.close()
-    send_status()
-    time.sleep(1)
+def sub_cb(topic, msg):
+	global state
+	print((topic, msg))
+	if msg == b"on":
+		led.value(1)
+		state = True
+		c.publish(TOPIC + "/status", str(state))
+	elif msg == b"off":
+		led.value(0)
+		state = False
+		c.publish(TOPIC + "/status", str(state))
+	elif msg == b"toggle":
+		led.value(not state)
+		state = not state
+		c.publish(TOPIC + "/status", str(state))
+	elif msg == b"state":
+		c.publish(TOPIC + "/status", str(state))
+
+c = MQTTClient(CLIENT_ID, SERVER)
+# Subscribed messages will be delivered to this callback
+c.set_callback(sub_cb)
+c.connect()
+c.subscribe(TOPIC)
+print("Connected to %s, subscribed to %s topic" % (SERVER, TOPIC))
+
+try:
+	while 1:
+		c.wait_msg()
+finally:
+	c.disconnect()

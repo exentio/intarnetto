@@ -1,13 +1,18 @@
 #!/bin/python
-import configparser, time, json, requests, os, socket
+import configparser, time, json, os, socket
+import paho.mqtt.client as mqtt
 from bottle import route, request, run, Jinja2Template, jinja2_view, static_file, GeventServer, response, get, HTTPResponse
-from gevent import monkey; monkey.patch_all()
-from gevent import sleep
-from mpd import MPDClient
+from gevent import monkey, sleep; monkey.patch_all()
 
 # Get current time in seconds
 sec_time = lambda: int(time.time())
+
 config = configparser.ConfigParser()
+server_ip = "0.0.0.0"
+server_port = 8080
+mqtt_broker = server_ip
+broker_port = 1883
+
 modules = []
 rooms = []
 
@@ -16,6 +21,27 @@ def parse_bool(s):
 		return True
 	elif str(s).lower() in ('no', 'false', 'f', 'n', '0'):
 		return False
+
+def on_mqtt_message(client, userdata, message):
+	for module in modules:
+		light_topic = "intarnetto/module_" + module.code + "/status"
+		mpd_topic = "mpd/module_" + module.code + "/status"
+		if message.topic == light_topic:
+			m_message = str(message.payload.decode("utf-8"))
+			module.set_status(parse_bool(m_message))
+			module.update_time = sec_time()
+			break
+		elif message.topic == mpd_topic:
+			m_message = str(message.payload.decode("utf-8"))
+			try:
+				m_json = json.loads(m_message)
+			except Exception as e:
+				module.set_none()
+			else:
+				module.status = m_json["playing"]
+				module.title = m_json["title"]
+				module.artist = m_json["artist"]
+			break
 
 # Base module class
 class Module:
@@ -49,46 +75,44 @@ class LightModule(Module):
 	def __init__(self, code, cat, ip, room, lit=None):
 		Module.__init__(self, code, cat, ip, room)
 		self.lit = lit
+		mqtt_c.subscribe("intarnetto/module_" + self.code + "/status")
 
 	def set_none(self):
 		self.lit = None
 
 	def toggle(self):
-		try:
-			status = parse_bool(requests.get("http://" + self.ip + "/light?lit=" + str(int(not self.lit)), timeout=5).text.replace("\n", ""))
-			return status
-		except:
-			pass
-		return None
+		mqtt_c.publish("intarnetto/module_" + self.code,"toggle")
+
+	def set_status(self, value):
+		self.lit = value
+
+	def get_status(self):
+		mqtt_c.publish("intarnetto/module_" + self.code,"state")
 
 class MpdControl(Module):
 	def __init__(self, code, cat, ip, room):
 		Module.__init__(self, code, cat, ip, room)
-		self.client = MPDClient()
-		self.client.timeout = 10
-		self.client.connect(self.ip, 6600)
-		self.playing = self.client.status()["state"]
-		self.title = self.client.currentsong()["title"]
-		self.artist = self.client.currentsong()["artist"]
-
-	def set_none(self):
+		self.status = None
 		self.title = None
 		self.artist = None
+		mqtt_c.subscribe("mpd/module_" + self.code + "/status")
+
+	def set_none(self):
 		self.playing = None
+		self.title = None
+		self.artist = None
+
+	def next(self):
+		mqtt_c.publish("mpd/module_" + self.code,"next")
+
+	def prev(self):
+		mqtt_c.publish("mpd/module_" + self.code,"prev")
 
 	def toggle(self):
-		try:
-			if self.client.status()["state"] == "play":
-				self.client.pause(1)
-			elif self.client.status()["state"] == "pause":
-				self.client.pause(0)
-			elif self.client.status()["state"] == "stop":
-				self.client.play()
-			self.playing = self.client.status()["state"]
-			return self.playing
-		except Exception as e:
-			print(str(e))
-		return None
+		mqtt_c.publish("mpd/module_" + self.code,"toggle")
+
+	def get_status(self):
+		mqtt_c.publish("mpd/module_" + self.code,"state")
 
 # Room class
 class Room:
@@ -106,6 +130,12 @@ def init_config():
 	config.read('config.ini')
 	for sec in config.sections():
 		try:
+			if config[sec] == 'server':
+				server_ip = config[sec]['ip']
+				server_port = int(config[sec]['port'])
+				mqtt_broker = config[sec]['mqtt_broker']
+				broker_port = int(config[sec]['broker_port'])
+
 			if config[sec]['active'] == 'yes':
 
 				if config[sec]['type'] == "temperature":
@@ -118,11 +148,13 @@ def init_config():
 					mMod = MpdControl(sec, config[sec]['type'], config[sec]['ip'], config[sec]['room'])
 
 				modules.append(mMod)
+
 		except KeyError:
 			continue
 		except Exception as e:
 			print(str(e))
 
+	# We need to do this after we have the modules
 	for sec in config.sections():
 		try:
 			if config[sec]['type'] == 'room':
@@ -137,9 +169,14 @@ def init_config():
 		except Exception as e:
 			print(str(e))
 
-	# Pass variables to the Jinja template
-	Jinja2Template.defaults['modules'] = modules
-	Jinja2Template.defaults['rooms'] = rooms
+# Pass variables to the Jinja template
+Jinja2Template.defaults['modules'] = modules
+Jinja2Template.defaults['rooms'] = rooms
+
+# Create a MQTT client
+mqtt_c = mqtt.Client("intarnetto_server")
+mqtt_c.connect(mqtt_broker, port=broker_port)
+mqtt_c.on_message=on_mqtt_message
 
 # Serve main page
 @route('/')
@@ -174,11 +211,7 @@ def events():
 			if module.cat != "mpd" and (module.update_time is None or (sec_time() - module.update_time) > 60):
 				module.set_none()
 				if module.cat == "light":
-					try:
-						module.lit = parse_bool(requests.get("http://" + module.ip + "/status", timeout=5).text.replace("\n", ""))
-						module.update_time = sec_time()
-					except:
-						pass
+					module.get_status()
 
 			if module.cat == 'temperature':
 				temp_json[module.code] = {'cat' : module.cat, 'temp' : module.temp, 'hum' : module.hum}
@@ -186,13 +219,10 @@ def events():
 				temp_json[module.code] = {'cat' : module.cat, 'closed' : module.closed}
 			elif module.cat == 'light':
 				temp_json[module.code] = {'cat' : module.cat, 'lit' : module.lit}
+			# The mpd module gets updated every time a SSE is sent
 			elif module.cat == 'mpd':
-				# The mpd module gets update every time a SSE is sent
-				module.playing = module.client.status()["state"]
-				module.title = module.client.currentsong()["title"]
-				module.artist = module.client.currentsong()["artist"]
-
-				temp_json[module.code] = {'cat' : module.cat, 'playing' : module.playing, 'title' : module.title, 'artist' : module.artist}
+				module.get_status()
+				temp_json[module.code] = {'cat' : module.cat, 'playing' : module.status, 'title' : module.title, 'artist' : module.artist}
 
 		# Data is sent only when it gets updated
 		if json.dumps(temp_json) != json_data:
@@ -239,7 +269,7 @@ def toggle_light():
 	module_code = request.query.code
 	for module in modules:
 		if module.code == module_code and module.cat == 'light':
-			module.lit = module.toggle()
+			module.toggle()
 			# Time it was last updated
 			module.update_time = sec_time()
 			#print('Lit: ' + str(module.lit))
@@ -258,11 +288,11 @@ def set_mpd_status():
 	for module in modules:
 		if module.code == module_code and module.cat == 'mpd':
 			if action == "toggle":
-				module.playing = module.toggle()
+				module.toggle()
 			elif action == "prev":
-				module.client.previous()
+				module.prev()
 			elif action == "next":
-				module.client.next()
+				module.next()
 			#print('Status: ' + str(module.playing))
 			break
 	# It's needed by the JS code
@@ -272,5 +302,8 @@ print("Initializing configuration... ", end='', flush=True)
 init_config()
 print("done!")
 
+# At this point we can start the MQTT client event loop
+mqtt_c.loop_start()
+
 # Remember kids, loopback and 0.0.0.0 are different stuff
-run(server=GeventServer, host='0.0.0.0', port=8080)
+run(server=GeventServer, host=server_ip, port=server_port)

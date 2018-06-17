@@ -4,12 +4,16 @@
 # bottle.py: 3909
 Jinja2 == 2.10
 
+# bottle.py: 3517
+aiohttp == 3.3.2
+
 # bottle.py: 57,3421
-# main.py: 4,5
+# main.py: 5
 gevent == 1.3.2.post0
 
-# main.py: 6
-python_mpd2 == 1.0.0
+# main.py: 3
+# mqtt-mpd.py: 2
+paho_mqtt == 1.3.1
 
-# main.py: 2
-requests == 2.18.4
+# mqtt-mpd.py: 3
+python_mpd2 == 1.0.0
